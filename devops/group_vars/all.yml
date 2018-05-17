@@ -1,0 +1,17 @@
+APP_NAME: sample-app
+APP_ENV_NAME: staging
+EB_APP_ENV: "{{APP_NAME}}-{{APP_ENV_NAME}}"
+EBApplicationNamePreStack: "{{ EB_APP_ENV }}-pre-requisites"
+S3LogGroupPrefix: "{{ EB_APP_ENV }}-lb-logs"
+TagOwner: sample-dev
+TagClassification: demo
+TagStatus: active
+TagName: "{{ APP_ENV_NAME }}"
+TagEnvironment: "{{APP_ENV_NAME}}"
+EBApplicationSecurityGroupName: "{{ EB_APP_ENV }}-security-groupName"
+AWS_REGION: "eu-west-1"
+DevOpsSNSEmail: example@gmail.com
+VPC: "vpc-e6349983"
+HealthCheckPath: "/health"
+InstanceMinSize: "1"
+InstanceMaxSize: "2"

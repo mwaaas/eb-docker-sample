@@ -1,0 +1,361 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Eb application pre-stack
+
+Parameters:
+  S3LogGroupPrefix:
+    Type: String
+    Description: Used by alb for logging
+  EBApplicationName:
+    Type: String
+    Description: sample-app EB Application name
+  BucketName:
+    Type: String
+    Description: S3 Bucket containing zip file
+  TrailBucketName:
+    Type: String
+    Description: S3 Bucket where CloudTrail publishes logs
+  TagName:
+    Type: String
+    Description: Name of resource
+  TagOwner:
+    Type: String
+    Description: Owner of this resource
+  TagEnvironment:
+    Type: String
+    Description: Environment name e.g. Prod/Staging
+  TagClassification:
+    Type: String
+    Description: Environment classification e.g. Confidential/Internal
+  TagStatus:
+    Type: String
+    Description: Environment status e.g. Active
+  DevOpsSNSEmail:
+    Type: String
+    Description: DevOps email address
+  EbEc2InstanceProfileName:
+    Type: String
+    Description: IAM Instance profile name for eb ec2 instances
+  EbEc2RoleName:
+    Type: String
+    Description: IAM Instance role name for eb ec2 instances
+  EbEc2LogShipperRoleName:
+    Type: String
+    Description: IAM Instance role name for shipping logs to cloudwatch
+  EbServiceRoleName:
+    Type: String
+    Description: IAM EB service role name
+  EbServicePolicyName:
+    Type: String
+    Description: IAM EB service policy name
+  EBApplicationSecurityGroupName:
+    Type: String
+    Description: EB Application security group
+  LoadBalancerSecurityGroupName:
+    Type: String
+    Description: Load balancer security group name
+  VPC:
+    Type: String
+    Description: AWS region VPC
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        !Sub '${BucketName}-${AWS::AccountId}-${AWS::Region}'
+      Tags:
+        - Key: Name
+          Value:
+            Ref: TagName
+        - Key: Owner
+          Value:
+            Ref: TagOwner
+        - Key: Environment
+          Value:
+            Ref: TagEnvironment
+        - Key: Classification
+          Value:
+            Ref: TagClassification
+        - Key: Status
+          Value:
+            Ref: TagStatus
+
+  BucketPolicy:
+    DependsOn: Bucket
+    Type: "AWS::S3::BucketPolicy"
+    Properties:
+      Bucket:
+        Ref: Bucket
+      PolicyDocument:
+        Statement:
+          # Allow AWS ELB to ship logs to S3;
+          -
+            Action:
+              - "s3:PutObject"
+            Sid: "ALBS3Logging"
+            Effect: "Allow"
+            Resource: !Sub "arn:aws:s3:::${BucketName}-${AWS::AccountId}-${AWS::Region}/${S3LogGroupPrefix}/AWSLogs/${AWS::AccountId}/*"
+            Principal:
+              AWS:
+                - !Sub "${AWS::AccountId}"
+          -
+            Action:
+              - "s3:PutObject"
+              - "s3:ListBucket"
+              - "s3:ListBucketVersions"
+              - "s3:GetObject"
+              - "s3:GetObjectVersion"
+            Sid: "EBEC2S3Access"
+            Effect: "Allow"
+            Resource:
+              - !Sub "arn:aws:s3:::${BucketName}-${AWS::AccountId}-${AWS::Region}"
+              - !Sub "arn:aws:s3:::${BucketName}-${AWS::AccountId}-${AWS::Region}/*"
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${AWS::AccountId}:role/${EbEc2RoleName}"
+                - !Sub "arn:aws:iam::${AWS::AccountId}:role/${EbServiceRoleName}"
+
+  # eb env. security group
+  EBApplicationSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: LoadBalancerSecurityGroup
+    Properties:
+      GroupDescription: "EB Application SG"
+      GroupName:
+        Ref: EBApplicationSecurityGroupName
+      VpcId:
+        Ref: VPC
+      SecurityGroupEgress:
+      - IpProtocol: "-1"
+        FromPort: '0'
+        ToPort: '65535'
+        CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        SourceSecurityGroupId:
+          Fn::GetAtt:
+            - LoadBalancerSecurityGroup
+            - GroupId
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        SourceSecurityGroupId:
+          Fn::GetAtt:
+            - LoadBalancerSecurityGroup
+            - GroupId
+      Tags:
+        - Key: Name
+          Value:
+            Ref: EBApplicationSecurityGroupName
+        - Key: Owner
+          Value:
+            Ref: TagOwner
+        - Key: Environment
+          Value:
+            Ref: TagEnvironment
+        - Key: Classification
+          Value:
+            Ref: TagClassification
+        - Key: Status
+          Value:
+            Ref: TagStatus
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EB load balancer SG
+      GroupName:
+        Ref: LoadBalancerSecurityGroupName
+      VpcId:
+        Ref: VPC
+      SecurityGroupEgress:
+      - IpProtocol: "-1"
+        FromPort: '0'
+        ToPort: '65535'
+        CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+      - IpProtocol: "-1"
+        FromPort: '0'
+        ToPort: '65535'
+        CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value:
+            Ref: LoadBalancerSecurityGroupName
+        - Key: Owner
+          Value:
+            Ref: TagOwner
+        - Key: Environment
+          Value:
+            Ref: TagEnvironment
+        - Key: Classification
+          Value:
+            Ref: TagClassification
+        - Key: Status
+          Value:
+            Ref: TagStatus
+
+  # create ec2 iam instance profile
+  ElasticBeanstalkEC2Profile:
+    Type: AWS::IAM::InstanceProfile
+    DependsOn: ElasticBeanstalkEC2Role
+    Properties:
+      Path: '/'
+      Roles:
+        - Ref: ElasticBeanstalkEC2Role
+      InstanceProfileName:
+        Ref: EbEc2InstanceProfileName
+
+  ElasticBeanstalkEC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: '/'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+        - arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker
+        - arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+
+      Policies:
+        # policy for shipping logs
+        - PolicyName:
+            Ref: EbEc2LogShipperRoleName
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                  - cloudwatch:PutMetricData
+                  - ec2:DescribeTags
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Effect: Allow
+                Resource:
+                - "*"
+      RoleName:
+        Ref: EbEc2RoleName
+
+  ElasticBeanstalkServiceProfile:
+    Type: AWS::IAM::InstanceProfile
+    DependsOn: ElasticBeanstalkServiceRole
+    Properties:
+      Path: '/'
+      Roles:
+        - Ref: ElasticBeanstalkServiceRole
+      InstanceProfileName:
+        Ref: EbServiceRoleName
+
+  ElasticBeanstalkServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: '/'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkEnhancedHealth
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - elasticbeanstalk.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+        - PolicyName:
+            Ref: EbServicePolicyName
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticloadbalancing:DescribeInstanceHealth
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInstanceStatus
+                  - ec2:GetConsoleOutput
+                  - ec2:AssociateAddress
+                  - ec2:DescribeAddresses
+                  - ec2:DescribeSecurityGroups
+                  - sqs:GetQueueAttributes
+                  - sqs:GetQueueUrl
+                  - autoscaling:DescribeAutoScalingGroups
+                  - autoscaling:DescribeAutoScalingInstances
+                  - autoscaling:DescribeScalingActivities
+                  - autoscaling:DescribeNotificationConfigurations
+                  - ecs:CreateCluster
+                  - ecs:DeleteCluster
+                  - elasticbeanstalk:TerminateEnvironment
+                Resource:
+                  - "*"
+      RoleName:
+        Ref: EbServiceRoleName
+
+  ElasticBeanstalkApplication:
+    Type: AWS::ElasticBeanstalk::Application
+    Properties:
+      Description: sample-app EB Application
+      ApplicationName:
+        Ref: EBApplicationName
+
+Outputs:
+  EBApplicationName:
+    Description: "EB Application name"
+    Value:
+      Ref: EBApplicationName
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-EBApplicationName"
+  ElasticBeanstalkEc2ProfileName:
+    Description: EB EC2 IAM instance profile name
+    Value:
+      Ref: ElasticBeanstalkEC2Profile
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-EbEc2ProfileName"
+  ElasticBeanstalkServiceRoleName:
+    Description: IAM service role name
+    Value:
+      Ref: ElasticBeanstalkServiceRole
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-EbServiceRoleName"
+  EBApplicationSecurityGroup:
+    Description: "EB Application SG"
+    Value:
+      Ref: EBApplicationSecurityGroupName
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-EBApplicationSecurityGroupName"
+
+  EBApplicationSecurityGroupId:
+    Description: "EB Application SG"
+    Value:
+      Fn::GetAtt:
+        - EBApplicationSecurityGroup
+        - GroupId
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-EBApplicationSecurityGroupId"
+  LoadBalancerSecurityGroupId:
+    Description: "EB loadbalancer SG"
+    Value:
+      Fn::GetAtt:
+        - LoadBalancerSecurityGroup
+        - GroupId
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-LoadBalancerSecurityGroupId"
+  BucketFullName:
+    Description: S3 full bucket name
+    Value:
+      Ref: Bucket

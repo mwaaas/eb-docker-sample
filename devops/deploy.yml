@@ -1,0 +1,89 @@
+---
+- hosts: 127.0.0.1
+  gather_facts: no
+  become: no
+  connection: local
+  vars_files:
+    - ./group_vars/all.yml
+    - ./group_vars/{{ env }}.yml
+
+  tasks:
+    - name: Provision  EB Application pre-requisites
+      cloudformation:
+        state: present
+        stack_name: "{{ EBApplicationNamePreStack }}"
+        region: "{{ AWS_REGION }}"
+        disable_rollback: true
+        template: templates/cloud-formation/eb_app_prequisite.yml
+        template_parameters:
+          S3LogGroupPrefix: "{{ S3LogGroupPrefix }}"
+          EBApplicationName: "{{ APP_NAME }}"
+          BucketName: "{{ EB_APP_ENV }}"
+          TagName: "{{ EB_APP_ENV }}"
+          TagOwner: "{{ TagOwner }}"
+          TagEnvironment: "{{ APP_ENV_NAME }}"
+          TagClassification: "{{ TagClassification }}"
+          TagStatus: "{{ TagStatus }}"
+          EbEc2InstanceProfileName: "{{ EB_APP_ENV }}-instance-profile"
+          EbEc2RoleName: "{{ EB_APP_ENV }}-ec2-role-name"
+          EbEc2LogShipperRoleName: "{{ EB_APP_ENV }}-log-shipper"
+          EbServiceRoleName: "{{ EB_APP_ENV }}-eb-service-role"
+          EbServicePolicyName: "{{ EB_APP_ENV }}-eb-policy-name"
+          EBApplicationSecurityGroupName: "{{ EBApplicationSecurityGroupName }}"
+          DevOpsSNSEmail: "{{ DevOpsSNSEmail }}"
+          TrailBucketName: "{{ EB_APP_ENV }}-trail-bucket-name"
+          LoadBalancerSecurityGroupName: "{{ EB_APP_ENV }}-lb-securityGroupName"
+          VPC: "{{ VPC }}"
+
+    # using this strategy instead of cloudformation
+    # output to avoid one stack cannot be deleted
+    - name: Get elastic beanstalk details
+      cloudformation_facts:
+        stack_name: "{{ EBApplicationNamePreStack }}"
+    - set_fact:
+       BucketFullName: "{{vars['cloudformation'][EBApplicationNamePreStack]['stack_outputs']['BucketFullName']}}"
+
+    - name: zip ebextension
+      shell: zip -r {{ APP_VERSION }}_{{APP_NAME}}.zip .ebextensions ./Dockerrun.aws.json
+
+
+    - name: Upload application to s3
+      aws_s3:
+        region: "{{ AWS_REGION }}"
+        mode: put
+        src: "{{ APP_VERSION }}_{{APP_NAME}}.zip"
+        bucket: "{{ BucketFullName }}"
+        object: "{{ APP_VERSION }}_{{APP_NAME}}.zip"
+        overwrite: never
+
+    - name: Create application version
+      shell: aws --region {{AWS_REGION}} elasticbeanstalk create-application-version \
+        --application-name {{ APP_NAME }} \
+        --version-label {{ APP_VERSION }} \
+        --source-bundle S3Bucket={{BucketFullName}},S3Key={{ APP_VERSION }}_{{APP_NAME}}.zip
+      ignore_errors: yes
+
+    - name: Provision EB environment
+      cloudformation:
+        state: present
+        stack_name: "{{ EB_APP_ENV }}"
+        region: "{{ AWS_REGION }}"
+        disable_rollback: true
+        template: templates/cloud-formation/eb_app.template.yml
+        template_parameters:
+          BucketFullName: "{{ BucketFullName }}"
+          S3LogGroupPrefix: "{{ S3LogGroupPrefix }}"
+          AppVersion: "{{ APP_VERSION }}"
+          PreRequisiteStack: "{{ EBApplicationNamePreStack }}"
+          EBApplicationEnvironmentName: "{{ EB_APP_ENV }}"
+          HealthCheckPath: "{{ HealthCheckPath }}"
+          InstanceMinSize: "{{ InstanceMinSize }}"
+          InstanceMaxSize: "{{ InstanceMaxSize }}"
+          TagName: "{{ TagName }}"
+          TagOwner: "{{ TagOwner }}"
+          TagEnvironment: "{{ TagEnvironment }}"
+          TagClassification: "{{ TagClassification }}"
+          TagStatus: "{{ TagStatus }}"
+          DevOpsSNSEmail: "{{ DevOpsSNSEmail }}"
+          VPC: "{{ VPC }}"
+          EBApplicationSecurityGroupName: "{{ EBApplicationSecurityGroupName }}"

@@ -1,0 +1,295 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Sample EB Application
+Parameters:
+  AppVersion:
+    Type: String
+    Description: application version to create
+  S3LogGroupPrefix:
+    Type: String
+    Description: Log prefix for the s3 bukcet logs
+  BucketFullName:
+    Type: String
+    Description: Bucket name to push logs to
+  PreRequisiteStack:
+    Type: String
+    Description: sample app pre-requisite stack name
+  EBApplicationEnvironmentName:
+    Type: String
+    Description: Environment name e.g. sample-app-production/sample-app-staging
+  HealthCheckPath:
+    Type: String
+    Description: Path for container health check
+  InstanceMinSize:
+    Type: String
+    Description: Minimum size of instance to maintain
+  InstanceMaxSize:
+    Type: String
+    Description: Maximum size of instance to maintain
+  TagName:
+    Type: String
+    Description: Name of resource
+  TagOwner:
+    Type: String
+    Description: Owner of this resource
+  TagEnvironment:
+    Type: String
+    Description: Environment name e.g. Prod/Staging
+  TagClassification:
+    Type: String
+    Description: Environment classification e.g. Confidential/Internal
+  TagStatus:
+    Type: String
+    Description: Environment status e.g. Active
+  DevOpsSNSEmail:
+    Type: String
+    Description: DevOps email address
+  VPC:
+    Type: String
+    Description: AWS region VPC
+  EBApplicationSecurityGroupName:
+    Type: String
+    Description: Security group name
+
+Resources:
+  ElasticBeanstalkConfigurationTemplate:
+    Type: AWS::ElasticBeanstalk::ConfigurationTemplate
+    Properties:
+      ApplicationName:
+        Fn::ImportValue:
+          Fn::Sub: "${PreRequisiteStack}-EBApplicationName"
+      Description: EB Environment Configuration Template
+      # Documentation of all option settings available
+      # http://docs.aws.amazon.com/elasticbeanstalk/latest/dg/command-options-general.html#command-options-general-elasticbeanstalkenvironment
+      OptionSettings:
+
+        ## NOTE: EXPORT ENVIRONMENT VARIABLES HERE
+        # - Namespace: aws:elasticbeanstalk:application:environment
+        #   OptionName: ENVIRONMENT_NAME
+        #   Value:
+        #     Ref: Environment
+
+        - Namespace: aws:elasticbeanstalk:application
+          OptionName: Application Healthcheck URL
+          Value:
+            Ref: HealthCheckPath
+        - Namespace: aws:autoscaling:asg
+          OptionName: MinSize
+          Value:
+            Ref: InstanceMinSize
+        - Namespace: aws:autoscaling:asg
+          OptionName: MaxSize
+          Value:
+            Ref: InstanceMaxSize
+        - Namespace: aws:autoscaling:asg
+          OptionName: Availability Zones
+          Value: Any 3
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: EnvironmentType
+          Value: LoadBalanced
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: LoadBalancerType
+          Value: application
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: ServiceRole
+          Value:
+            Fn::ImportValue:
+              Fn::Sub: "${PreRequisiteStack}-EbServiceRoleName"
+        - Namespace: aws:elasticbeanstalk:command
+          OptionName: DeploymentPolicy
+          Value: Rolling
+        - Namespace: aws:elasticbeanstalk:command
+          OptionName: Timeout
+          Value: "900"
+        - Namespace: aws:elasticbeanstalk:command
+          OptionName: BatchSizeType
+          Value: Percentage
+        - Namespace: aws:elasticbeanstalk:command
+          OptionName: BatchSize
+          Value: "50"
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: EC2KeyName
+          Value: mwas_mac
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: InstanceType
+          Value: t2.large
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: IamInstanceProfile
+          Value:
+            Fn::ImportValue:
+              Fn::Sub: "${PreRequisiteStack}-EbEc2ProfileName"
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: MonitoringInterval
+          Value: 1
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: SecurityGroups
+          Value:
+            Ref: EBApplicationSecurityGroupName
+
+        ## TODO: SETUP AN APPROPRIATE AUTO-SCALING POLICY
+        - Namespace: aws:autoscaling:trigger
+          OptionName: BreachDuration
+          Value: "2"
+        - Namespace: aws:autoscaling:trigger
+          OptionName: LowerBreachScaleIncrement
+          Value: "-1"
+        - Namespace: aws:autoscaling:trigger
+          OptionName: UpperBreachScaleIncrement
+          Value: "1"
+        - Namespace: aws:autoscaling:trigger
+          OptionName: LowerThreshold
+          Value: "50"
+        - Namespace: aws:autoscaling:trigger
+          OptionName: UpperThreshold
+          Value: "70"
+        - Namespace: aws:autoscaling:trigger
+          OptionName: MeasureName
+          Value: "CPUUtilization"
+        - Namespace: aws:autoscaling:trigger
+          OptionName: Period
+          Value: "1"
+        - Namespace: aws:autoscaling:trigger
+          OptionName: Statistic
+          Value: Average
+        - Namespace: aws:autoscaling:trigger
+          OptionName: Unit
+          Value: Seconds
+        - Namespace: aws:autoscaling:updatepolicy:rollingupdate
+          OptionName: RollingUpdateType
+          Value: Health
+        - Namespace: aws:autoscaling:updatepolicy:rollingupdate
+          OptionName: RollingUpdateEnabled
+          Value: true
+        - Namespace: aws:elasticbeanstalk:healthreporting:system
+          OptionName: SystemType
+          Value: enhanced
+        - Namespace: aws:elasticbeanstalk:hostmanager
+          OptionName: LogPublicationControl
+          Value: true
+        - Namespace: aws:elasticbeanstalk:sns:topics
+          OptionName: Notification Endpoint
+          Value:
+            Ref: DevOpsSNSEmail
+
+        ## TODO: CONFIGURE ALB WITH APPROPRIATE SETTINGS
+        - Namespace: aws:elasticbeanstalk:environment:process:default
+          OptionName: DeregistrationDelay
+          Value: '20'
+        - Namespace: aws:elasticbeanstalk:environment:process:default
+          OptionName: HealthCheckInterval
+          Value: '10'
+        - Namespace: aws:elasticbeanstalk:environment:process:default
+          OptionName: HealthyThresholdCount
+          Value: '5'
+        - Namespace: aws:elasticbeanstalk:environment:process:default
+          OptionName: UnhealthyThresholdCount
+          Value: '5'
+        - Namespace: aws:elasticbeanstalk:environment:process:default
+          OptionName: Port
+          Value: '80'
+        - Namespace: aws:elasticbeanstalk:environment:process:default
+          OptionName: Protocol
+          Value: 'HTTP'
+        - Namespace: aws:elasticbeanstalk:environment:process:default
+          OptionName: MatcherHTTPCode
+          Value: 302
+        - Namespace: aws:elbv2:listener:443
+          OptionName: DefaultProcess
+          Value: 443
+        - Namespace: aws:elbv2:listener:443
+          OptionName: ListenerEnabled
+          Value: true
+          # uncomment to enable https
+#        - Namespace: aws:elbv2:listener:443
+#          OptionName: Protocol
+#          Value: 'HTTPS'
+#        - Namespace: aws:elbv2:listener:443
+#          OptionName: SSLCertificateArns
+#          Value:
+#            Ref: SSLCertificateArn
+        - Namespace: aws:elbv2:loadbalancer
+          OptionName: AccessLogsS3Enabled
+          Value: true
+        - Namespace: aws:elbv2:loadbalancer
+          OptionName: AccessLogsS3Bucket
+          Value:
+            Ref: BucketFullName
+        - Namespace: aws:elbv2:loadbalancer
+          OptionName: AccessLogsS3Prefix
+          Value:
+            Ref: S3LogGroupPrefix
+        - Namespace: aws:elbv2:loadbalancer
+          OptionName: ManagedSecurityGroup
+          Value:
+            Fn::ImportValue:
+              Fn::Sub: "${PreRequisiteStack}-LoadBalancerSecurityGroupId"
+        - Namespace: aws:elbv2:loadbalancer
+          OptionName: SecurityGroups
+          Value:
+            Fn::ImportValue:
+              Fn::Sub: "${PreRequisiteStack}-LoadBalancerSecurityGroupId"
+        - Namespace: aws:elasticbeanstalk:environment:process:443
+          OptionName: DeregistrationDelay
+          Value: '20'
+        - Namespace: aws:elasticbeanstalk:environment:process:443
+          OptionName: HealthCheckInterval
+          Value: '10'
+        - Namespace: aws:elasticbeanstalk:environment:process:443
+          OptionName: HealthyThresholdCount
+          Value: '5'
+        - Namespace: aws:elasticbeanstalk:environment:process:443
+          OptionName: UnhealthyThresholdCount
+          Value: '5'
+        - Namespace: aws:elasticbeanstalk:environment:process:443
+          OptionName: Port
+          Value: '80'
+        - Namespace: aws:elasticbeanstalk:environment:process:443
+          OptionName: Protocol
+          Value: 'HTTP'
+        - Namespace: aws:elasticbeanstalk:environment:process:443
+          OptionName: MatcherHTTPCode
+          Value: 302
+        - Namespace: aws:elasticbeanstalk:cloudwatch:logs
+          OptionName: StreamLogs
+          Value: true
+        - Namespace: aws:elasticbeanstalk:cloudwatch:logs
+          OptionName: DeleteOnTerminate
+          Value: false
+        - Namespace: aws:elasticbeanstalk:cloudwatch:logs
+          OptionName: RetentionInDays
+          Value: 7
+      # command to get all the available solution stack
+      # aws elasticbeanstalk list-available-solution-stacks | grep Multi-container
+      SolutionStackName: 64bit Amazon Linux 2018.03 v2.10.0 running Multi-container Docker 17.12.1-ce (Generic)
+
+  ElasticBeanstalkEnvironment:
+    Type: AWS::ElasticBeanstalk::Environment
+    Properties:
+      ApplicationName:
+        Fn::ImportValue:
+          Fn::Sub: "${PreRequisiteStack}-EBApplicationName"
+      Description: EB environment name
+      EnvironmentName:
+        Ref: EBApplicationEnvironmentName
+      TemplateName:
+        Ref: ElasticBeanstalkConfigurationTemplate
+      VersionLabel:
+        Ref: AppVersion
+      Tier:
+        Type: Standard
+        Name: WebServer
+      Tags:
+        - Key: Name
+          Value:
+            Ref: TagName
+        - Key: Owner
+          Value:
+            Ref: TagOwner
+        - Key: Environment
+          Value:
+            Ref: TagEnvironment
+        - Key: Classification
+          Value:
+            Ref: TagClassification
+        - Key: Status
+          Value:
+            Ref: TagStatus

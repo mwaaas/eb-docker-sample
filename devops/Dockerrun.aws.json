@@ -4,6 +4,7 @@
       {
         "name": "nginx",
         "image": "nginx",
+        "memory": 512,
         "portMappings": [
           {
             "hostPort": 80,
